@@ -1,0 +1,28 @@
+{
+  "listen": [
+    { "transport": "tcp", "address": ":25500" },
+    { "transport": "tls", "address": ":443" },
+    { "transport": "kcp", "address": ":25500" }
+  ],
+  "public_bind": "",
+  "port_range": { "min": 25600, "max": 25699 },
+
+  "max_hosts": 16,
+  "max_players_per_host": 32,
+  "max_players_per_ip": 8,
+  "max_tunnels_per_user": 1,
+
+  "handshake_timeout": "10s",
+  "open_timeout": "10s",
+
+  "max_handshakes": 256,
+  "max_handshakes_per_ip": 32,
+  "auth_failures": { "max": 5, "window": "10m", "ban": "15m" },
+
+  "log_level": "info",
+
+  "users": [
+    { "name": "alice", "secret": "CHANGE-ME", "port": 25601 },
+    { "name": "bob", "secret": "CHANGE-ME" }
+  ]
+}

@@ -1,0 +1,15 @@
+# Never commit a real relay configuration, secrets or keys
+relay.json
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+
+*.log
+.DS_Store
+Thumbs.db
+
+# Go build output
+/mctunnel-relay
+/mctunnel-relay.exe
+*.exe
