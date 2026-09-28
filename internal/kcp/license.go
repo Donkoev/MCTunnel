@@ -1,14 +1,11 @@
-# Third-party notices
+package kcp
 
-## KCP
+// License is the copyright and permission notice of KCP, which this package is a port of. The
+// MIT licence asks for it in every copy: mctunnel-relay prints it with `mctunnel-relay licenses`,
+// so each copy of the binary carries it.
+const License = `KCP - A Fast and Reliable ARQ Protocol
+https://github.com/skywind3000/kcp
 
-The relay (`mctunnel-relay`) contains a port of KCP, an ARQ protocol by Lin Wei:
-<https://github.com/skywind3000/kcp>.
-
-The notice below travels with every copy of the relay: `mctunnel-relay licenses` prints it (with
-the relay's own licence), and the relay zip of a release carries it as `LICENSES.txt`.
-
-```
 MIT License
 
 Copyright (c) 2017 Lin Wei (skywind3000 at gmail.com)
@@ -30,4 +27,4 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-```
+`

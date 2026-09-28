@@ -189,6 +189,7 @@ GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -buildvcs=false -trimpath \
 ## 📄 Лицензия
 
 [MIT](LICENSE) © 2026 Ramazan Donkoev. Relay содержит порт [KCP](https://github.com/skywind3000/kcp)
-(MIT), подробности — в [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+(MIT), подробности — в [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). Обе лицензии идут вместе
+с relay: их печатает `mctunnel-relay licenses`, а в архиве релиза они лежат в `LICENSES.txt`.
 
 Minecraft — товарный знак Mojang AB. Проект не связан с Mojang и Microsoft.

@@ -1,17 +1,17 @@
-# Third-party notices
+package main
 
-## KCP
+import (
+	"fmt"
+	"io"
+	"strings"
 
-The relay (`mctunnel-relay`) contains a port of KCP, an ARQ protocol by Lin Wei:
-<https://github.com/skywind3000/kcp>.
+	"mctunnel/server/internal/kcp"
+)
 
-The notice below travels with every copy of the relay: `mctunnel-relay licenses` prints it (with
-the relay's own licence), and the relay zip of a release carries it as `LICENSES.txt`.
+// relayLicense is the relay's own licence (LICENSE in the repository).
+const relayLicense = `MIT License
 
-```
-MIT License
-
-Copyright (c) 2017 Lin Wei (skywind3000 at gmail.com)
+Copyright (c) 2026 Ramazan Donkoev
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
@@ -30,4 +30,12 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-```
+`
+
+// printLicenses writes the relay's licence and the notice of KCP, which the relay contains a
+// port of: `mctunnel-relay licenses`.
+func printLicenses(w io.Writer) {
+	rule := strings.Repeat("-", 72)
+	fmt.Fprintf(w, "MCTunnel relay %s\nhttps://github.com/Donkoev/MCTunnel\n\n%s\n%s\n\n", version, relayLicense, rule)
+	fmt.Fprintf(w, "The relay contains a port of KCP (internal/kcp):\n\n%s", kcp.License)
+}

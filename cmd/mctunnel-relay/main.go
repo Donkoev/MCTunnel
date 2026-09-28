@@ -9,6 +9,7 @@
 //	mctunnel-relay user list|add|show|remove -config ... [NAME]
 //	                                                  manage the users (see manage.go)
 //	mctunnel-relay version
+//	mctunnel-relay licenses                           print the relay's licence and KCP's notice
 //
 // SIGHUP reloads the user list (revoked users are disconnected at once); SIGINT/SIGTERM stop
 // the relay after telling every host why.
@@ -48,6 +49,9 @@ func main() {
 			os.Exit(runUser(os.Args[2:], os.Stdout, os.Stderr))
 		case "version", "-version", "--version":
 			fmt.Println("mctunnel-relay", version)
+			return
+		case "licenses", "license":
+			printLicenses(os.Stdout)
 			return
 		}
 	}
