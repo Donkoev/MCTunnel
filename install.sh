@@ -4,12 +4,12 @@
 # One command on the server:
 #   curl -fsSL https://github.com/Donkoev/MCTunnel/releases/latest/download/install.sh | sudo bash
 #
-# The first run asks three questions (a user name, the server's address, the ports), downloads
-# the relay of this release, checks its SHA-256, installs it as the systemd service
-# mctunnel-relay, turns on a firewall that leaves only the relay and SSH open (ufw; what else
-# listens is shown first, and can be kept) and prints what to enter in the mod. Every later run
-# opens a menu: update the relay, show a user's data for the mod, add or remove users, restart,
-# the log, the firewall, uninstall.
+# It first asks for the language (Русский or English). The first run then asks three questions
+# (a user name, the server's address, the ports), downloads the relay of this release, checks its
+# SHA-256, installs it as the systemd service mctunnel-relay, turns on a firewall that leaves
+# only the relay and SSH open (ufw; what else listens is shown first, and can be kept) and prints
+# what to enter in the mod. Every later run opens a menu: update the relay, show a user's data
+# for the mod, add or remove users, restart, the log, the firewall, uninstall.
 #
 # Without a terminal, or in scripts, give the action as arguments (after a pipe:
 # `| sudo bash -s -- ACTION ...`):
@@ -21,6 +21,7 @@
 #   uninstall --yes
 #   auto                    what deploy.ps1 runs: a relay.json next to the script is installed,
 #                           an installed relay is updated, a new server gets the questions
+#   --lang ru|en            the language, without the question (or MCTUNNEL_LANG)
 # Relay binaries next to the script (deploy.ps1, a release folder) are used instead of a
 # download. MCTUNNEL_VERSION picks another release, NO_COLOR turns the colors off, and
 # MCTUNNEL_NAME renames the service, user and paths (a second copy beside the real one, for
@@ -47,12 +48,14 @@ UNIT="/etc/systemd/system/$SERVICE.service"
 SYSCTL="/etc/sysctl.d/99-$NAME-bbr.conf"
 MODLOAD="/etc/modules-load.d/$NAME-bbr.conf"
 
+UI="ru"       # the language of every text: ru or en (choose_language)
 HERE=""       # the script's directory when it runs from a file; empty after a pipe
 WORK=""       # temporary directory, removed on exit
 TTY=""        # where answers are read from; empty: no terminal, defaults are taken
 ARCH=""
 ACTION=""
 ACTION_ARG=""
+OPT_LANG=""
 OPT_USER=""
 OPT_ADDRESS=""
 OPT_PORTS=""
@@ -78,6 +81,11 @@ setup_output() {
 		COLOR=0
 		R="" BOLD="" GOLD="" YELLOW="" GREEN="" DGREEN="" AQUA="" RED="" GRAY="" DGRAY="" WHITE=""
 	fi
+}
+
+# L RUSSIAN ENGLISH: the text in the chosen language.
+L() {
+	if [[ $UI == en ]]; then printf '%s' "$2"; else printf '%s' "$1"; fi
 }
 
 title() { printf '\n  %s%s■ %s%s\n' "$GOLD" "$BOLD" "$1" "$R"; }
@@ -135,24 +143,33 @@ GRASS=(
 	"DDDDDdDDLDdDDDDD" "DLDDDDDDDDDDDdLD" "DDDdDLDDdDDLDDDD" "LDDDDDDDDDDDDDDL"
 	"DDLDDdDDDLDDdDDD" "DDDDDDLDDDDDDDLD" "DdDDLDDDdDDLDDDD" "DDDDDDDdDDDDDdDD"
 )
-SPLASHES=(
+SPLASHES_RU=(
 	"Без белого IP!" "Работает за CGNAT!" "Друзьям мод не нужен!" "Теперь с KCP!"
 	"Копаем туннель…" "Свой сервер — свои правила!" "Секрет не покидает ПК!"
 )
+SPLASHES_EN=(
+	"No public IP needed!" "Works behind CGNAT!" "Friends need no mod!" "Now with KCP!"
+	"Digging a tunnel…" "Your server, your rules!" "The secret never leaves your PC!"
+)
 
 banner() {
-	local version=$RELEASE
-	[[ $version == dev ]] && version="из исходников"
+	local version=$RELEASE splash
+	[[ $version == dev ]] && version=$(L "из исходников" "from source")
 	if ((COLOR == 0)); then
-		printf '\n  MCTunnel · relay-сервер для вашего мира Minecraft · %s\n' "$version"
+		printf '\n  %s\n' "$(L "MCTunnel · relay-сервер для вашего мира Minecraft · $version" \
+			"MCTunnel · relay server for your Minecraft world · $version")"
 		return
 	fi
+	if [[ $UI == en ]]; then
+		splash=${SPLASHES_EN[RANDOM % ${#SPLASHES_EN[@]}]}
+	else
+		splash=${SPLASHES_RU[RANDOM % ${#SPLASHES_RU[@]}]}
+	fi
 	local -A pixel=([G]=107 [g]=71 [k]=64 [D]=94 [d]=58 [L]=137)
-	local splash=${SPLASHES[RANDOM % ${#SPLASHES[@]}]}
 	local text=(
 		""
-		"${WHITE}${BOLD}MCTunnel${R}  ${DGRAY}установщик relay · ${version}${R}"
-		"${GRAY}Ваш мир Minecraft — друзьям, через свой VPS.${R}"
+		"${WHITE}${BOLD}MCTunnel${R}  ${DGRAY}$(L "установщик relay" "relay installer") · ${version}${R}"
+		"${GRAY}$(L "Ваш мир Minecraft — друзьям, через свой VPS." "Your Minecraft world for your friends, through your own VPS.")${R}"
 		""
 		"${YELLOW}${BOLD}${splash}${R}"
 		"" "" ""
@@ -171,7 +188,7 @@ banner() {
 # The advancement toast of the game, for a finished installation.
 toast() {
 	printf '\n'
-	box "$DGRAY" "${YELLOW}★ Достижение получено!${R}" "  ${WHITE}$1${R}"
+	box "$DGRAY" "${YELLOW}★ $(L "Достижение получено!" "Advancement Made!")${R}" "  ${WHITE}$1${R}"
 }
 
 # ── input ───────────────────────────────────────────────────────────────────────────────────
@@ -185,6 +202,36 @@ setup_input() {
 }
 
 interactive() { [[ -n $TTY ]]; }
+
+# choose_language: UI from --lang or MCTUNNEL_LANG; else asked first thing (the language saved by
+# an earlier run is the default); without a terminal the saved one, else Russian.
+choose_language() {
+	local saved answer default=1
+	case "${OPT_LANG:-${MCTUNNEL_LANG:-}}" in
+		ru* | RU*) UI=ru; return ;;
+		en* | EN*) UI=en; return ;;
+	esac
+	saved=$(state_get LANGUAGE)
+	[[ $saved == en ]] && default=2
+	if ! interactive; then
+		UI=${saved:-ru}
+		[[ $UI == en ]] || UI=ru
+		return
+	fi
+	printf '\n  %sMCTunnel%s\n\n' "$WHITE$BOLD" "$R"
+	printf '    %s1%s  Русский\n' "$AQUA$BOLD" "$R"
+	printf '    %s2%s  English\n' "$AQUA$BOLD" "$R"
+	while :; do
+		printf '  %s?%s Язык / Language %s[%s]%s: ' "$AQUA$BOLD" "$R" "$DGRAY" "$default" "$R"
+		IFS= read -r answer <"$TTY" || true
+		answer=${answer%$'\r'}
+		answer=${answer// /}
+		case "${answer:-$default}" in
+			1 | ru | RU | Ru | р | Р | русский | Русский) UI=ru; return ;;
+			2 | en | EN | En | english | English) UI=en; return ;;
+		esac
+	done
+}
 
 # ask VAR QUESTION [DEFAULT]: one line of input; Enter takes the default.
 ask() {
@@ -204,20 +251,21 @@ ask() {
 }
 
 # confirm QUESTION [y|n]: yes or no; Enter takes the default. Both keyboard layouts work: д, да,
-# y, yes (and l, the д key on a Latin layout) mean yes.
+# y, yes (and l, the д key on a Latin layout) mean yes; н, нет, n, no mean no.
 confirm() {
-	local answer default=${2:-y}
+	local answer default=${2:-y} choices
 	if ! interactive; then
 		[[ $default == y ]]
 		return
 	fi
+	if [[ $default == y ]]; then choices=$(L "Д/н" "Y/n"); else choices=$(L "д/Н" "y/N"); fi
 	while :; do
-		ask answer "$1 $([[ $default == y ]] && printf '%s(Д/н)%s' "$DGRAY" "$R" || printf '%s(д/Н)%s' "$DGRAY" "$R")" ""
+		ask answer "$1 ${DGRAY}(${choices})${R}" ""
 		case "$answer" in
 			"") [[ $default == y ]]; return ;;
 			д | Д | да | Да | ДА | l | L | y | Y | yes | Yes | YES) return 0 ;;
 			н | Н | нет | Нет | НЕТ | n | N | no | No | NO) return 1 ;;
-			*) warn "Ответьте «д» (да) или «н» (нет)." ;;
+			*) warn "$(L "Ответьте «д» (да) или «н» (нет)." "Answer y (yes) or n (no).")" ;;
 		esac
 	done
 }
@@ -229,18 +277,19 @@ valid_port() { [[ $1 =~ ^[0-9]{1,5}$ ]] && (($1 >= 1 && $1 <= 65535)); }
 # ── system ──────────────────────────────────────────────────────────────────────────────────
 
 check_system() {
-	[[ $(uname -s) == Linux ]] || die "Нужен сервер на Linux."
+	[[ $(uname -s) == Linux ]] || die "$(L "Нужен сервер на Linux." "This needs a Linux server.")"
 	if ((EUID != 0)); then
-		die "Нужны права root." \
-			"Запустите так: curl -fsSL https://github.com/$REPO/releases/latest/download/install.sh | sudo bash"
+		die "$(L "Нужны права root." "This needs root.")" \
+			"$(L "Запустите так:" "Run it like this:") curl -fsSL https://github.com/$REPO/releases/latest/download/install.sh | sudo bash"
 	fi
 	if ! command -v systemctl >/dev/null 2>&1 || [[ ! -d /run/systemd/system ]]; then
-		die "Нужен systemd (Ubuntu, Debian и похожие системы)."
+		die "$(L "Нужен systemd (Ubuntu, Debian и похожие системы)." "This needs systemd (Ubuntu, Debian and the like).")"
 	fi
 	case "$(uname -m)" in
 		x86_64 | amd64) ARCH=amd64 ;;
 		aarch64 | arm64) ARCH=arm64 ;;
-		*) die "Процессор $(uname -m) не поддерживается: нужен x86_64 или arm64." ;;
+		*) die "$(L "Процессор $(uname -m) не поддерживается: нужен x86_64 или arm64." \
+			"The $(uname -m) processor is not supported: x86_64 or arm64 is needed.")" ;;
 	esac
 }
 
@@ -251,15 +300,17 @@ cleanup() {
 }
 
 on_error() {
-	printf '\n  %s✘ Что-то пошло не так (строка %s: %s).%s\n' "$RED$BOLD" "$1" "$2" "$R" >&2
-	printf '    Запустите установщик ещё раз; если не поможет, пришлите этот вывод:\n' >&2
+	printf '\n  %s✘ %s%s\n' "$RED$BOLD" "$(L "Что-то пошло не так (строка $1: $2)." "Something went wrong (line $1: $2).")" "$R" >&2
+	printf '    %s\n' "$(L "Запустите установщик ещё раз; если не поможет, пришлите этот вывод:" \
+		"Run the installer again; if that does not help, send this output:")" >&2
 	printf '    https://github.com/%s/issues\n\n' "$REPO" >&2
 }
 
 installed() { [[ -f $CONF ]]; }
 
 require_installed() {
-	installed || die "MCTunnel relay здесь не установлен ($CONF нет)." "Запустите установщик без аргументов."
+	installed || die "$(L "MCTunnel relay здесь не установлен ($CONF нет)." "The MCTunnel relay is not installed here (no $CONF).")" \
+		"$(L "Запустите установщик без аргументов." "Run the installer without arguments.")"
 }
 
 relay_version() { "$1" version 2>/dev/null | awk '{print $2}'; }
@@ -276,7 +327,8 @@ manageable() {
 
 require_manageable() {
 	manageable && return 0
-	warn "Установленный relay ${1:-}слишком старый для этого: сначала обновите его (пункт 1 меню)."
+	warn "$(L "Установленный relay слишком старый для этого: сначала обновите его (пункт 1 меню)." \
+		"The installed relay is too old for this: update it first (menu item 1).")"
 	return 1
 }
 
@@ -287,7 +339,7 @@ fetch() {
 	elif command -v wget >/dev/null 2>&1; then
 		wget -q -T 20 -t 3 -O "$2" "$1"
 	else
-		die "Нужен curl или wget." "Установите: apt install curl"
+		die "$(L "Нужен curl или wget." "This needs curl or wget.")" "$(L "Установите:" "Install it:") apt install curl"
 	fi
 }
 
@@ -313,41 +365,57 @@ stage_binary() {
 	local asset="mctunnel-relay-linux-$ARCH" want got
 	if [[ -n $HERE && -f $HERE/$asset ]]; then
 		install -m 0755 "$HERE/$asset" "$BIN.new"
-		ok "relay $(relay_version "$BIN.new") ($ARCH) из $HERE"
+		ok "$(L "relay $(relay_version "$BIN.new") ($ARCH) из $HERE" "relay $(relay_version "$BIN.new") ($ARCH) from $HERE")"
 		return
 	fi
-	info "Скачиваю relay с GitHub ($REPO)…"
+	info "$(L "Скачиваю relay с GitHub ($REPO)…" "Downloading the relay from GitHub ($REPO)…")"
 	fetch "$(release_url "$asset")" "$WORK/$asset" ||
-		die "Не удалось скачать relay." "$(release_url "$asset")" "Проверьте, что сервер открывает github.com."
+		die "$(L "Не удалось скачать relay." "Could not download the relay.")" "$(release_url "$asset")" \
+			"$(L "Проверьте, что сервер открывает github.com." "Check that the server can reach github.com.")"
 	fetch "$(release_url SHA256SUMS.txt)" "$WORK/SHA256SUMS.txt" ||
-		die "Не удалось скачать контрольные суммы." "$(release_url SHA256SUMS.txt)"
+		die "$(L "Не удалось скачать контрольные суммы." "Could not download the checksums.")" "$(release_url SHA256SUMS.txt)"
 	# The list may come with Windows line endings; names may carry a folder ("relay/...").
 	want=$(tr -d '\r' <"$WORK/SHA256SUMS.txt" | awk -v a="$asset" '{ n = $2; sub(/^\*/, "", n); sub(/.*\//, "", n); if (n == a) print $1 }' | head -n 1)
 	got=$(sha256sum "$WORK/$asset" | awk '{print $1}')
 	if [[ -z $want || $want != "$got" ]]; then
-		die "Контрольная сумма relay не совпала: файл повреждён или подменён." "Ничего не установлено."
+		die "$(L "Контрольная сумма relay не совпала: файл повреждён или подменён." \
+			"The relay's checksum does not match: the file is damaged or tampered with.")" \
+			"$(L "Ничего не установлено." "Nothing was installed.")"
 	fi
 	install -m 0755 "$WORK/$asset" "$BIN.new"
-	ok "скачан relay $(relay_version "$BIN.new") ($ARCH), SHA-256 совпал"
+	ok "$(L "скачан relay $(relay_version "$BIN.new") ($ARCH), SHA-256 совпал" \
+		"downloaded relay $(relay_version "$BIN.new") ($ARCH), SHA-256 matches")"
 }
 
 ensure_sysuser() {
 	if ! id "$SYSUSER" >/dev/null 2>&1; then
 		useradd --system --user-group --no-create-home --home-dir /nonexistent --shell /usr/sbin/nologin "$SYSUSER"
-		ok "системный пользователь $SYSUSER (relay работает без прав root)"
+		ok "$(L "системный пользователь $SYSUSER (relay работает без прав root)" "system user $SYSUSER (the relay runs without root)")"
 	fi
 	install -d -m 0750 -o root -g "$SYSUSER" "$ETC"
 }
 
-saved_address() {
-	[[ -f $STATE ]] && sed -n 's/^ADDRESS=//p' "$STATE" | head -n 1
+# state_get KEY / state_set KEY VALUE: what the installer remembers in $STATE (the server's
+# address for the mod, the language).
+state_get() {
+	[[ -r $STATE ]] && sed -n "s/^$1=//p" "$STATE" 2>/dev/null | head -n 1
 	return 0
 }
 
-save_address() {
-	printf 'ADDRESS=%s\n' "$1" >"$STATE"
-	chmod 0644 "$STATE"
+state_set() {
+	local tmp
+	[[ -d $ETC ]] || return 0
+	tmp=$(mktemp)
+	{
+		[[ -f $STATE ]] && grep -v "^$1=" "$STATE"
+		printf '%s=%s\n' "$1" "$2"
+	} >"$tmp" || true
+	install -m 0644 "$tmp" "$STATE"
+	rm -f "$tmp"
 }
+
+saved_address() { state_get ADDRESS; }
+save_address() { state_set ADDRESS "$1"; }
 
 # detect_ip: this server's public IPv4 address (as the internet sees it), or nothing.
 detect_ip() {
@@ -385,9 +453,9 @@ EOF
 	modprobe tcp_bbr 2>/dev/null || true
 	sysctl -q -p "$SYSCTL" >/dev/null 2>&1 || true
 	if [[ $(sysctl -n net.ipv4.tcp_congestion_control 2>/dev/null) == bbr ]]; then
-		ok "BBR включён, буферы UDP увеличены"
+		ok "$(L "BBR включён, буферы UDP увеличены" "BBR on, UDP buffers raised")"
 	else
-		info "BBR на этом ядре недоступен: relay работает и без него"
+		info "$(L "BBR на этом ядре недоступен: relay работает и без него" "BBR is not available on this kernel: the relay works without it")"
 	fi
 }
 
@@ -486,7 +554,7 @@ ports_text() {
 	tcp=$(printf '%s, ' "${TCP_PORTS[@]}" "${PLAYER_RANGE/-/–}")
 	tcp=${tcp%, }
 	if ((${#UDP_PORTS[@]} > 0)); then
-		printf 'TCP %s и UDP %s' "$tcp" "$(printf '%s, ' "${UDP_PORTS[@]}" | sed 's/, $//')"
+		printf 'TCP %s %s UDP %s' "$tcp" "$(L "и" "and")" "$(printf '%s, ' "${UDP_PORTS[@]}" | sed 's/, $//')"
 	else
 		printf 'TCP %s' "$tcp"
 	fi
@@ -498,14 +566,14 @@ open_firewall() {
 	if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
 		for p in "${HOST_PORTS[@]}"; do ufw allow "$p" comment "$NAME hosts" >/dev/null; done
 		ufw allow "${PLAYER_RANGE/-/:}/tcp" comment "$NAME players" >/dev/null
-		ok "ufw: открыты $(ports_text)"
+		ok "$(L "ufw: открыты" "ufw: opened") $(ports_text)"
 	elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
 		for p in "${HOST_PORTS[@]}"; do firewall-cmd -q --permanent --add-port="$p"; done
 		firewall-cmd -q --permanent --add-port="$PLAYER_RANGE/tcp"
 		firewall-cmd -q --reload
-		ok "firewalld: открыты $(ports_text)"
+		ok "$(L "firewalld: открыты" "firewalld: opened") $(ports_text)"
 	else
-		info "файрвола на сервере нет (ufw и firewalld выключены)"
+		info "$(L "файрвола на сервере нет (ufw и firewalld выключены)" "no firewall on the server (ufw and firewalld are off)")"
 	fi
 }
 
@@ -515,12 +583,12 @@ close_firewall() {
 	if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
 		for p in "${HOST_PORTS[@]}"; do ufw delete allow "$p" >/dev/null 2>&1 || true; done
 		ufw delete allow "${PLAYER_RANGE/-/:}/tcp" >/dev/null 2>&1 || true
-		ok "ufw: порты закрыты"
+		ok "$(L "ufw: порты закрыты" "ufw: ports closed")"
 	elif command -v firewall-cmd >/dev/null 2>&1 && firewall-cmd --state >/dev/null 2>&1; then
 		for p in "${HOST_PORTS[@]}"; do firewall-cmd -q --permanent --remove-port="$p" || true; done
 		firewall-cmd -q --permanent --remove-port="$PLAYER_RANGE/tcp" || true
 		firewall-cmd -q --reload || true
-		ok "firewalld: порты закрыты"
+		ok "$(L "firewalld: порты закрыты" "firewalld: ports closed")"
 	fi
 }
 
@@ -528,13 +596,17 @@ close_firewall() {
 
 # ssh_ports: the TCP ports SSH is reachable on, one per line: the listening sockets of sshd (or
 # dropbear), its systemd socket, its configuration, and the port of every open SSH session.
-# Empty when there is no SSH: the firewall is then left alone, it could lock the owner out.
+# Loopback sockets do not count: sshd listens there for X11 forwarding (6010, ...) and forwarded
+# ports, which are no way in from the outside. Empty when there is no SSH: the firewall is then
+# left alone, it could lock the owner out.
 ssh_ports() {
 	{
-		ss -H -ltnp 2>/dev/null | awk '/"(sshd|dropbear)"/ {n = split($4, a, ":"); print a[n]}'
+		ss -H -ltnp 2>/dev/null |
+			awk '/"(sshd|dropbear)"/ && $4 !~ /^(127\.|\[::1\]|\[::ffff:127\.)/ {n = split($4, a, ":"); print a[n]}'
 		systemctl show -p Listen ssh.socket sshd.socket 2>/dev/null | sed -n 's/^Listen=.*:\([0-9][0-9]*\) (Stream)$/\1/p'
 		if command -v sshd >/dev/null 2>&1; then sshd -T 2>/dev/null | awk '$1 == "port" {print $2}'; fi
-		ss -H -tnp state established 2>/dev/null | awk '/"(sshd|dropbear)"/ {n = split($3, a, ":"); print a[n]}'
+		ss -H -tnp state established 2>/dev/null |
+			awk '/"(sshd|dropbear)"/ && $3 !~ /^(127\.|\[::1\]|\[::ffff:127\.)/ {n = split($3, a, ":"); print a[n]}'
 	} | grep -E '^[0-9]+$' | sort -un
 }
 
@@ -580,53 +652,61 @@ firewall_step() {
 	((OPT_NO_FIREWALL == 0)) || return 1
 	ssh=$(ssh_ports | tr '\n' ' ')
 	ssh=${ssh% }
+	[[ -n $ssh ]] || ssh=$(L "не найден" "not found")
 	mapfile -t others < <(other_listeners "$@" $(ssh_ports | sed 's|$|/tcp|'))
-	hint "Файрвол: снаружи останутся открыты только порты relay и SSH (${ssh:-не найден}),"
-	hint "все остальные закроются. Исходящие соединения, ping и системные службы работают как раньше."
+	hint "$(L "Файрвол: снаружи останутся открыты только порты relay и SSH ($ssh)," \
+		"Firewall: from the outside only the relay's ports and SSH ($ssh) stay open,")"
+	hint "$(L "все остальные закроются. Исходящие соединения, ping и системные службы работают как раньше." \
+		"everything else is closed. Outgoing connections, ping and system services keep working.")"
 	if ((${#others[@]} > 0)); then
-		warn "Сейчас снаружи доступны и закроются:"
+		warn "$(L "Сейчас снаружи доступны и закроются:" "Reachable from the outside now, and about to be closed:")"
 		for line in "${others[@]}"; do
 			read -r proto port proc <<<"$line"
 			hint "  ${proto^^} $port ($proc)"
 		done
 		if [[ -n $OPT_KEEP ]]; then
 			for p in $OPT_KEEP; do
-				valid_keep "$p" || die "--keep: «$p» — не порт (80, 80/tcp или 8000:8010/tcp)."
+				valid_keep "$p" || die "$(L "--keep: «$p» — не порт (80, 80/tcp или 8000:8010/tcp)." \
+					"--keep: \"$p\" is not a port (80, 80/tcp or 8000:8010/tcp).")"
 				FIREWALL_KEEP+=("$p")
 			done
 		elif interactive; then
 			while :; do
-				ask answer "Оставить какие-то открытыми? Номера через пробел, например 80 443/tcp (Enter — нет)" ""
+				ask answer "$(L "Оставить какие-то открытыми? Номера через пробел, например 80 443/tcp (Enter — нет)" \
+					"Keep any of them open? Numbers separated by spaces, e.g. 80 443/tcp (Enter: none)")" ""
 				bad="" FIREWALL_KEEP=()
 				for p in $answer; do
 					if valid_keep "$p"; then FIREWALL_KEEP+=("$p"); else bad+=" $p"; fi
 				done
 				[[ -n $bad ]] || break
-				warn "Не понял:$bad. Порт — число (можно с /tcp или /udp), диапазон — 8000:8010/tcp."
+				warn "$(L "Не понял:$bad. Порт — число (можно с /tcp или /udp), диапазон — 8000:8010/tcp." \
+					"Not understood:$bad. A port is a number (optionally with /tcp or /udp), a range is 8000:8010/tcp.")"
 			done
 		fi
 	fi
-	confirm "Включить файрвол?" y
+	confirm "$(L "Включить файрвол?" "Turn the firewall on?")" y
 }
 
 # lockdown KEEP...: turns the firewall (ufw) on so that only the relay, SSH and KEEP are open to
 # the outside. Outgoing connections and the answers to them, loopback, ping and DHCP keep working
 # (ufw's own rules). The old ufw rules are backed up by `ufw reset`.
 lockdown() {
-	local ssh=() p kept=""
+	local ssh=() p
 	mapfile -t ssh < <(ssh_ports)
 	if ((${#ssh[@]} == 0)); then
-		warn "Не нашёл, на каком порту работает SSH: файрвол не трогаю, чтобы не потерять доступ к серверу."
+		warn "$(L "Не нашёл, на каком порту работает SSH: файрвол не трогаю, чтобы не потерять доступ к серверу." \
+			"Could not find the port SSH runs on: leaving the firewall alone so as not to lose access to the server.")"
 		return 1
 	fi
 	if ! command -v ufw >/dev/null 2>&1; then
 		if ! command -v apt-get >/dev/null 2>&1; then
-			warn "Здесь нет ufw: закройте лишние порты файрволом своей системы."
+			warn "$(L "Здесь нет ufw: закройте лишние порты файрволом своей системы." \
+				"There is no ufw here: close the other ports with your system's firewall.")"
 			return 1
 		fi
-		info "Ставлю файрвол ufw…"
+		info "$(L "Ставлю файрвол ufw…" "Installing the ufw firewall…")"
 		if ! DEBIAN_FRONTEND=noninteractive apt-get install -y -qq ufw >/dev/null 2>&1; then
-			warn "Не удалось поставить ufw: закройте лишние порты сами."
+			warn "$(L "Не удалось поставить ufw: закройте лишние порты сами." "Could not install ufw: close the other ports yourself.")"
 			return 1
 		fi
 	fi
@@ -639,9 +719,15 @@ lockdown() {
 	ufw allow "${PLAYER_RANGE/-/:}/tcp" comment "$NAME players" >/dev/null
 	for p in "$@"; do ufw allow "$p" comment "kept open by the $NAME installer" >/dev/null; done
 	ufw --force enable >/dev/null
-	(($# == 0)) || kept=" и $*"
-	ok "файрвол включён: снаружи открыты только SSH (${ssh[*]}), relay$kept"
-	hint "Остальные порты закрыты. Прежние правила ufw сохранены в /etc/ufw/*.rules.<время>."
+	if (($# == 0)); then
+		ok "$(L "файрвол включён: снаружи открыты только SSH (${ssh[*]}) и relay" \
+			"firewall on: from the outside only SSH (${ssh[*]}) and the relay are open")"
+	else
+		ok "$(L "файрвол включён: снаружи открыты только SSH (${ssh[*]}), relay и $*" \
+			"firewall on: from the outside only SSH (${ssh[*]}), the relay and $* are open")"
+	fi
+	hint "$(L "Остальные порты закрыты. Прежние правила ufw сохранены в /etc/ufw/*.rules.<время>." \
+		"All other ports are closed. The previous ufw rules are saved in /etc/ufw/*.rules.<time>.")"
 }
 
 # relay_up: the relay runs and is still the same process a few seconds later (one that exits
@@ -662,7 +748,8 @@ show_journal() {
 reload_relay() {
 	if systemctl is-active --quiet "$SERVICE"; then
 		systemctl reload "$SERVICE"
-		ok "relay перечитал список пользователей, остальные туннели не прерывались"
+		ok "$(L "relay перечитал список пользователей, остальные туннели не прерывались" \
+			"the relay reloaded its users; other tunnels were not interrupted")"
 	fi
 }
 
@@ -670,108 +757,143 @@ reload_relay() {
 
 # card FILE: the data to enter in the mod, from the name=/secret=/port= lines of the relay.
 card() {
-	local name secret port address friends
+	local name secret port address friends labels=15
 	name=$(sed -n 's/^name=//p' "$1")
 	secret=$(sed -n 's/^secret=//p' "$1")
 	port=$(sed -n 's/^port=//p' "$1")
 	address=$(saved_address)
-	address=${address:-"<IP сервера>"}
+	address=${address:-$(L "<IP сервера>" "<server IP>")}
 	friends=$address
 	[[ $port != 25565 ]] && friends="$address:$port"
 	local bar="$GREEN▌$R"
 	printf '\n'
-	printf '  %s %s%sДанные для мода%s\n' "$bar" "$GOLD" "$BOLD" "$R"
-	printf '  %s %sВ игре: Esc → MCTunnel → вкладка «Сервер»%s\n' "$bar" "$GRAY" "$R"
+	printf '  %s %s%s%s%s\n' "$bar" "$GOLD" "$BOLD" "$(L "Данные для мода" "Data for the mod")" "$R"
+	printf '  %s %s%s%s\n' "$bar" "$GRAY" "$(L "В игре: Esc → MCTunnel → вкладка «Сервер»" "In the game: Esc → MCTunnel → the Relay tab")" "$R"
 	printf '  %s\n' "$bar"
-	printf '  %s %s%s%s%s%s\n' "$bar" "$GRAY" "$(pad "Адрес relay" 15)" "$AQUA$BOLD" "$address" "$R"
-	printf '  %s %s%s%s%s%s\n' "$bar" "$GRAY" "$(pad "Пользователь" 15)" "$AQUA$BOLD" "$name" "$R"
-	printf '  %s %s%s%s%s%s\n' "$bar" "$GRAY" "$(pad "Секрет" 15)" "$AQUA$BOLD" "$secret" "$R"
+	printf '  %s %s%s%s%s%s\n' "$bar" "$GRAY" "$(pad "$(L "Адрес relay" "Relay address")" $labels)" "$AQUA$BOLD" "$address" "$R"
+	printf '  %s %s%s%s%s%s\n' "$bar" "$GRAY" "$(pad "$(L "Пользователь" "User")" $labels)" "$AQUA$BOLD" "$name" "$R"
+	printf '  %s %s%s%s%s%s\n' "$bar" "$GRAY" "$(pad "$(L "Секрет" "Secret")" $labels)" "$AQUA$BOLD" "$secret" "$R"
 	printf '  %s\n' "$bar"
-	printf '  %s %sДрузья зайдут по адресу %s%s%s%s (Сетевая игра → Прямое подключение).%s\n' \
-		"$bar" "$GRAY" "$WHITE$BOLD" "$friends" "$R" "$GRAY" "$R"
+	printf '  %s %s%s %s%s%s%s %s%s\n' "$bar" "$GRAY" "$(L "Друзья зайдут по адресу" "Friends join at")" "$WHITE$BOLD" "$friends" "$R" "$GRAY" \
+		"$(L "(Сетевая игра → Прямое подключение)." "(Multiplayer → Direct Connection).")" "$R"
 	printf '\n'
-	warn "Секрет — как пароль: не публикуйте его. Показать снова: запустите установщик ещё раз."
+	warn "$(L "Секрет — как пароль: не публикуйте его. Показать снова: запустите установщик ещё раз." \
+		"The secret is like a password: do not share it. To see it again, run the installer again.")"
 	listeners
 	if [[ $LISTEN_TCP != 25500 || ${LISTEN_TLS:-443} != 443 || ${LISTEN_KCP:-25500} != 25500 ]]; then
-		info "Порты не стандартные: впишите их в моде на вкладке «Протокол» —"
-		hint "TCP ${LISTEN_TCP:-выключен}, TLS ${LISTEN_TLS:-выключен}, KCP ${LISTEN_KCP:-выключен}."
+		local off
+		off=$(L "выключен" "off")
+		info "$(L "Порты не стандартные: впишите их в моде на вкладке «Протокол» —" "Non-standard ports: enter them in the mod on the Protocol tab:")"
+		hint "TCP ${LISTEN_TCP:-$off}, TLS ${LISTEN_TLS:-$off}, KCP ${LISTEN_KCP:-$off}."
 	elif [[ -z $LISTEN_TLS || -z $LISTEN_KCP ]]; then
-		info "Часть протоколов на сервере выключена: в моде на вкладке «Протокол» можно снять с них галочки."
+		info "$(L "Часть протоколов на сервере выключена: в моде на вкладке «Протокол» можно снять с них галочки." \
+			"Some protocols are off on the server: you can uncheck them in the mod on the Protocol tab.")"
 	fi
 }
 
 provider_reminder() {
 	ports_of
-	info "Если у хостера есть свой файрвол (в панели управления VPS), откройте там"
+	info "$(L "Если у хостера есть свой файрвол (в панели управления VPS), откройте там" \
+		"If your hosting provider has its own firewall (in the VPS control panel), open these there:")"
 	hint "$(ports_text)."
 }
 
 # ── actions ────────────────────────────────────────────────────────────────────────────────
 
+# step N TITLE: the header of a wizard step.
+step() {
+	printf '\n  %s%s%s · %s%s%s\n' "$AQUA$BOLD" "$(L "Шаг $1 из 3" "Step $1 of 3")" "$R" "$WHITE" "$2" "$R"
+}
+
 wizard() {
 	local name=$OPT_USER address=$OPT_ADDRESS detected
 	local tcp=25500 tls=443 kcp=25500 pmin=25565 pmax=25664
 
-	title "Установка relay"
-	hint "Три вопроса — и сервер готов. Enter оставляет значение в скобках."
+	title "$(L "Установка relay" "Relay installation")"
+	hint "$(L "Три вопроса — и сервер готов. Enter оставляет значение в скобках." \
+		"Three questions and the server is ready. Enter keeps the value in brackets.")"
 
-	printf '\n  %sШаг 1 из 3%s · %sимя пользователя%s\n' "$AQUA$BOLD" "$R" "$WHITE" "$R"
-	hint "Его вписывают в мод вместе с секретом. Друзьям, которые заходят в ваш мир,"
-	hint "ничего вписывать не нужно."
+	step 1 "$(L "имя пользователя" "user name")"
+	hint "$(L "Его вписывают в мод вместе с секретом. Друзьям, которые заходят в ваш мир," \
+		"You enter it in the mod together with the secret. Friends who join your world")"
+	hint "$(L "ничего вписывать не нужно." "do not need to enter anything.")"
 	while :; do
-		[[ -n $name ]] || ask name "Имя (латиница, цифры, . _ -)" "steve"
+		[[ -n $name ]] || ask name "$(L "Имя (латиница, цифры, . _ -)" "Name (Latin letters, digits, . _ -)")" "steve"
 		valid_name "$name" && break
-		warn "«$name» не подходит: от 1 до 32 символов A-Z a-z 0-9 . _ -"
+		warn "$(L "«$name» не подходит: от 1 до 32 символов A-Z a-z 0-9 . _ -" "\"$name\" will not do: 1 to 32 characters A-Z a-z 0-9 . _ -")"
 		interactive || exit 1
 		name=""
 	done
 
-	printf '\n  %sШаг 2 из 3%s · %sадрес сервера%s\n' "$AQUA$BOLD" "$R" "$WHITE" "$R"
+	step 2 "$(L "адрес сервера" "server address")"
 	if [[ -z $address ]]; then
-		info "Узнаю внешний IP…"
+		info "$(L "Узнаю внешний IP…" "Looking up the public IP…")"
 		detected=$(detect_ip || true)
-		if [[ -n $detected ]]; then ok "внешний IP: $detected"; else warn "Внешний IP узнать не удалось."; fi
-		hint "Этот адрес вы впишете в мод, по нему же зайдут друзья. Можно указать домен."
+		if [[ -n $detected ]]; then
+			ok "$(L "внешний IP: $detected" "public IP: $detected")"
+		else
+			warn "$(L "Внешний IP узнать не удалось." "Could not find the public IP.")"
+		fi
+		hint "$(L "Этот адрес вы впишете в мод, по нему же зайдут друзья. Можно указать домен." \
+			"You enter this address in the mod, and friends join through it. A domain works too.")"
 		while :; do
-			ask address "Адрес для мода" "$detected"
+			ask address "$(L "Адрес для мода" "Address for the mod")" "$detected"
 			valid_address "$address" && break
-			warn "Нужен IP-адрес или домен (латиница, цифры, точки и дефисы)."
+			warn "$(L "Нужен IP-адрес или домен (латиница, цифры, точки и дефисы)." \
+				"An IP address or a domain is needed (Latin letters, digits, dots and hyphens).")"
 			interactive || exit 1
 		done
 	fi
-	valid_address "$address" || die "Адрес «$address» не подходит."
+	valid_address "$address" || die "$(L "Адрес «$address» не подходит." "The address \"$address\" will not do.")"
 
-	printf '\n  %sШаг 3 из 3%s · %sпорты и файрвол%s\n' "$AQUA$BOLD" "$R" "$WHITE" "$R"
+	step 3 "$(L "порты и файрвол" "ports and firewall")"
 	if [[ -n $OPT_PORTS ]]; then
 		local range
 		read -r tcp tls kcp range <<<"$OPT_PORTS"
 		pmin=${range%-*} pmax=${range#*-}
 	else
 		if listening tcp | grep -qx 443; then
-			warn "Порт 443 уже занят (веб-сервером?): TLS будет выключен, TCP и KCP работают."
+			warn "$(L "Порт 443 уже занят (веб-сервером?): TLS будет выключен, TCP и KCP работают." \
+				"Port 443 is taken (by a web server?): TLS stays off, TCP and KCP work.")"
 			tls=0
 		fi
-		printf '    %s%s%s подключение хостов (из мода)\n' "$WHITE" "$(pad "TCP $tcp" 18)" "$R"
-		((tls != 0)) && printf '    %s%s%s TLS: для сетей, где режут необычные порты\n' "$WHITE" "$(pad "TCP $tls" 18)" "$R"
-		printf '    %s%s%s KCP: для Wi-Fi и мобильного интернета с потерями\n' "$WHITE" "$(pad "UDP $kcp" 18)" "$R"
-		printf '    %s%s%s друзья заходят в миры (порт на пользователя)\n' "$WHITE" "$(pad "TCP $pmin–$pmax" 18)" "$R"
-		if ! confirm "Оставить эти порты?" y; then
-			while :; do ask tcp "TCP-порт для хостов" "$tcp"; valid_port "$tcp" && break; warn "Порт — число от 1 до 65535."; done
-			while :; do ask tls "TLS-порт (0 — без TLS)" "$tls"; [[ $tls == 0 ]] || valid_port "$tls" && break; warn "Порт — число от 1 до 65535 или 0."; done
-			while :; do ask kcp "UDP-порт для KCP (0 — без KCP)" "$tcp"; [[ $kcp == 0 ]] || valid_port "$kcp" && break; warn "Порт — число от 1 до 65535 или 0."; done
+		printf '    %s%s%s %s\n' "$WHITE" "$(pad "TCP $tcp" 18)" "$R" "$(L "подключение хостов (из мода)" "hosts connect here (from the mod)")"
+		if ((tls != 0)); then
+			printf '    %s%s%s %s\n' "$WHITE" "$(pad "TCP $tls" 18)" "$R" "$(L "TLS: для сетей, где режут необычные порты" "TLS: for networks that block unusual ports")"
+		fi
+		printf '    %s%s%s %s\n' "$WHITE" "$(pad "UDP $kcp" 18)" "$R" "$(L "KCP: для Wi-Fi и мобильного интернета с потерями" "KCP: for Wi-Fi and mobile internet with packet loss")"
+		printf '    %s%s%s %s\n' "$WHITE" "$(pad "TCP $pmin–$pmax" 18)" "$R" "$(L "друзья заходят в миры (порт на пользователя)" "friends join the worlds (one port per user)")"
+		if ! confirm "$(L "Оставить эти порты?" "Keep these ports?")" y; then
 			while :; do
-				ask pmin "Первый порт для друзей (по одному на пользователя, всего 100)" "$pmin"
+				ask tcp "$(L "TCP-порт для хостов" "TCP port for hosts")" "$tcp"
+				valid_port "$tcp" && break
+				warn "$(L "Порт — число от 1 до 65535." "A port is a number from 1 to 65535.")"
+			done
+			while :; do
+				ask tls "$(L "TLS-порт (0 — без TLS)" "TLS port (0: no TLS)")" "$tls"
+				[[ $tls == 0 ]] || valid_port "$tls" && break
+				warn "$(L "Порт — число от 1 до 65535 или 0." "A port is a number from 1 to 65535, or 0.")"
+			done
+			while :; do
+				ask kcp "$(L "UDP-порт для KCP (0 — без KCP)" "UDP port for KCP (0: no KCP)")" "$tcp"
+				[[ $kcp == 0 ]] || valid_port "$kcp" && break
+				warn "$(L "Порт — число от 1 до 65535 или 0." "A port is a number from 1 to 65535, or 0.")"
+			done
+			while :; do
+				ask pmin "$(L "Первый порт для друзей (по одному на пользователя, всего 100)" "First port for friends (one per user, 100 in all)")" "$pmin"
 				valid_port "$pmin" && ((pmin + 99 <= 65535)) && break
-				warn "Нужен порт от 1 до 65436."
+				warn "$(L "Нужен порт от 1 до 65436." "A port from 1 to 65436 is needed.")"
 			done
 			pmax=$((pmin + 99))
 		fi
 	fi
 	local busy
 	busy=$(listening tcp | awk -v a="$tcp" -v b="$tls" -v lo="$pmin" -v hi="$pmax" '$1 == a || $1 == b || ($1 >= lo && $1 <= hi)' | head -n 3 | tr '\n' ' ')
-	[[ -z $busy ]] || die "Порты уже заняты другой программой: $busy" "Запустите установщик ещё раз и выберите другие порты."
+	[[ -z $busy ]] || die "$(L "Порты уже заняты другой программой: $busy" "These ports are taken by another program: $busy")" \
+		"$(L "Запустите установщик ещё раз и выберите другие порты." "Run the installer again and choose other ports.")"
 	if ((kcp != 0)) && listening udp | grep -qx "$kcp"; then
-		die "UDP-порт $kcp уже занят другой программой." "Запустите установщик ещё раз и выберите другой порт."
+		die "$(L "UDP-порт $kcp уже занят другой программой." "UDP port $kcp is taken by another program.")" \
+			"$(L "Запустите установщик ещё раз и выберите другой порт." "Run the installer again and choose another port.")"
 	fi
 	local open=("$tcp/tcp" "$pmin-$pmax/tcp") firewall=0
 	((tls == 0)) || open+=("$tls/tcp")
@@ -780,19 +902,21 @@ wizard() {
 	if firewall_step "${open[@]}"; then firewall=1; fi
 
 	printf '\n'
-	confirm "Устанавливаю relay для «$name» на $address?" y || { info "Отменено, ничего не изменено."; exit 0; }
+	confirm "$(L "Устанавливаю relay для «$name» на $address?" "Install the relay for \"$name\" on $address?")" y ||
+		{ info "$(L "Отменено, ничего не изменено." "Cancelled, nothing was changed.")"; exit 0; }
 
-	title "Установка"
+	title "$(L "Установка" "Installing")"
 	stage_binary
 	ensure_sysuser
 	"$BIN.new" init -config "$CONF" -user "$name" -tcp "$tcp" -tls "$tls" -kcp "$kcp" -players "$pmin-$pmax" >"$WORK/user" ||
-		die "Не удалось создать настройки $CONF."
+		die "$(L "Не удалось создать настройки $CONF." "Could not create the configuration $CONF.")"
 	chgrp "$SYSUSER" "$CONF"
 	chmod 0640 "$CONF"
-	ok "настройки: $CONF"
+	ok "$(L "настройки: $CONF" "configuration: $CONF")"
 	mv -f "$BIN.new" "$BIN"
 	ok "relay: $BIN"
 	save_address "$address"
+	state_set LANGUAGE "$UI"
 	write_sysctl
 	if ((firewall == 0)) || ! lockdown "${FIREWALL_KEEP[@]}"; then
 		open_firewall
@@ -804,14 +928,16 @@ wizard() {
 	systemctl restart "$SERVICE" || true
 	if ! relay_up; then
 		show_journal 12
-		die "Relay не запустился." "Причина — в строках выше. Исправьте её и запустите установщик ещё раз."
+		die "$(L "Relay не запустился." "The relay did not start.")" \
+			"$(L "Причина — в строках выше. Исправьте её и запустите установщик ещё раз." "The reason is in the lines above. Fix it and run the installer again.")"
 	fi
-	ok "служба $SERVICE работает и запустится сама после перезагрузки"
+	ok "$(L "служба $SERVICE работает и запустится сама после перезагрузки" "the $SERVICE service runs and starts by itself after a reboot")"
 
-	toast "Свой relay-сервер"
+	toast "$(L "Свой relay-сервер" "A relay of your own")"
 	card "$WORK/user"
 	provider_reminder
-	printf '\n  %sГотово! Откройте мир для сети — адрес для друзей появится в чате.%s\n\n' "$GREEN$BOLD" "$R"
+	printf '\n  %s%s%s\n\n' "$GREEN$BOLD" "$(L "Готово! Откройте мир для сети — адрес для друзей появится в чате." \
+		"Done! Open your world to LAN: the address for friends appears in the chat.")" "$R"
 }
 
 # update: the new binary (and unit, sysctl file) with the installed configuration, or with
@@ -819,14 +945,19 @@ wizard() {
 action_update() {
 	local before after cfg backup="" had_unit=0 bin_changed=0 unit_changed=0
 	cfg=${NEW_CONFIG:-$CONF}
-	title "$(installed && printf 'Обновление relay' || printf 'Установка relay')"
+	if installed; then
+		title "$(L "Обновление relay" "Updating the relay")"
+	else
+		title "$(L "Установка relay" "Relay installation")"
+	fi
 	before=$([[ -x $BIN ]] && relay_version "$BIN" || true)
 	stage_binary
 	after=$(relay_version "$BIN.new")
 	ensure_sysuser
 	if ! "$BIN.new" -config "$cfg" -check >"$WORK/check" 2>&1; then
 		sed 's/^/    /' "$WORK/check" >&2
-		die "Новый relay не принимает настройки $cfg." "Ничего не изменено."
+		die "$(L "Новый relay не принимает настройки $cfg." "The new relay does not accept the configuration $cfg.")" \
+			"$(L "Ничего не изменено." "Nothing was changed.")"
 	fi
 
 	if ! cmp -s "$BIN.new" "$BIN"; then
@@ -838,18 +969,19 @@ action_update() {
 		if [[ -f $CONF ]] && ! cmp -s "$NEW_CONFIG" "$CONF"; then
 			backup="$CONF.bak.$(date +%Y%m%d-%H%M%S)"
 			cp -p "$CONF" "$backup"
-			info "прежние настройки сохранены: $backup"
+			info "$(L "прежние настройки сохранены: $backup" "the previous configuration is saved as $backup")"
 		fi
 		install -m 0640 -o root -g "$SYSUSER" "$NEW_CONFIG" "$CONF.new"
 		mv -f "$CONF.new" "$CONF"
-		ok "настройки: $CONF"
+		ok "$(L "настройки: $CONF" "configuration: $CONF")"
 	elif [[ $(stat -c %U:%G:%a "$CONF") != "root:$SYSUSER:640" ]]; then
 		# Written by hand (nano, cp without -p): the relay runs as $SYSUSER and must read it,
 		# nobody else should.
 		chown "root:$SYSUSER" "$CONF"
 		chmod 0640 "$CONF"
-		info "$CONF: владелец root:$SYSUSER, права 0640"
+		info "$(L "$CONF: владелец root:$SYSUSER, права 0640" "$CONF: owner root:$SYSUSER, mode 0640")"
 	fi
+	state_set LANGUAGE "$UI"
 	write_sysctl
 	open_firewall
 	write_unit
@@ -865,23 +997,24 @@ action_update() {
 	systemctl enable --quiet "$SERVICE"
 
 	if ((bin_changed == 0 && unit_changed == 0)) && [[ -z $backup && -z $NEW_CONFIG ]] && systemctl is-active --quiet "$SERVICE"; then
-		ok "уже установлена версия $after, relay работает"
+		ok "$(L "уже установлена версия $after, relay работает" "version $after is already installed, the relay is running")"
 		return 0
 	fi
-	info "Перезапускаю relay: туннели переподключатся сами за несколько секунд."
+	info "$(L "Перезапускаю relay: туннели переподключатся сами за несколько секунд." \
+		"Restarting the relay: tunnels reconnect by themselves within seconds.")"
 	systemctl reset-failed "$SERVICE" 2>/dev/null || true
 	systemctl restart "$SERVICE" || true
 	if relay_up; then
 		if [[ -n $before && $before != "$after" ]]; then
-			ok "relay обновлён: $before → $after, работает"
+			ok "$(L "relay обновлён: $before → $after, работает" "relay updated: $before → $after, running")"
 		else
-			ok "relay $after работает"
+			ok "$(L "relay $after работает" "relay $after is running")"
 		fi
 		return 0
 	fi
 
 	show_journal 12
-	warn "Relay не остался запущенным: возвращаю прежнюю версию."
+	warn "$(L "Relay не остался запущенным: возвращаю прежнюю версию." "The relay did not stay up: putting the previous version back.")"
 	local restored=0
 	if ((bin_changed == 1)) && [[ -f $BIN.prev ]]; then cp -p "$BIN.prev" "$BIN" && restored=1; fi
 	if [[ -n $backup ]]; then install -m 0640 -o root -g "$SYSUSER" "$backup" "$CONF" && restored=1; fi
@@ -892,10 +1025,12 @@ action_update() {
 		systemctl reset-failed "$SERVICE" 2>/dev/null || true
 		systemctl restart "$SERVICE" || true
 		if relay_up; then
-			die "Обновление не удалось, прежняя версия снова работает." "Причина — в журнале выше."
+			die "$(L "Обновление не удалось, прежняя версия снова работает." "The update failed; the previous version runs again.")" \
+				"$(L "Причина — в журнале выше." "The reason is in the log above.")"
 		fi
 	fi
-	die "Relay не запускается." "Причина — в журнале выше: sudo journalctl -u $SERVICE -n 50"
+	die "$(L "Relay не запускается." "The relay does not start.")" \
+		"$(L "Причина — в журнале выше:" "The reason is in the log above:") sudo journalctl -u $SERVICE -n 50"
 }
 
 # pick_user QUESTION: PICKED = a user chosen by number or name (the only one, if one).
@@ -910,12 +1045,12 @@ pick_user() {
 	i=1
 	for line in "${lines[@]}"; do
 		IFS=$'\t' read -r n p s <<<"$line"
-		printf '    %s%d%s  %s  %s(порт %s%s)%s\n' "$AQUA$BOLD" "$i" "$R" "$n" "$DGRAY" "$p" \
-			"$([[ $s == off ]] && printf ', выключен' || true)" "$R"
+		printf '    %s%d%s  %s  %s(%s %s%s)%s\n' "$AQUA$BOLD" "$i" "$R" "$n" "$DGRAY" "$(L "порт" "port")" "$p" \
+			"$([[ $s == off ]] && L ", выключен" ", off" || true)" "$R"
 		i=$((i + 1))
 	done
 	interactive || return 1
-	ask answer "$1 (номер или имя, Enter — отмена)" ""
+	ask answer "$1 $(L "(номер или имя, Enter — отмена)" "(number or name, Enter: cancel)")" ""
 	[[ -n $answer ]] || return 1
 	if [[ $answer =~ ^[0-9]+$ ]] && ((answer >= 1 && answer <= ${#lines[@]})); then
 		PICKED=${lines[answer - 1]%%$'\t'*}
@@ -924,7 +1059,7 @@ pick_user() {
 	for line in "${lines[@]}"; do
 		[[ ${line%%$'\t'*} == "$answer" ]] && PICKED=$answer && return 0
 	done
-	warn "Нет такого пользователя: $answer"
+	warn "$(L "Нет такого пользователя: $answer" "No such user: $answer")"
 	return 1
 }
 
@@ -933,11 +1068,11 @@ action_show() {
 	require_manageable || return 1
 	if [[ -z $(saved_address) ]]; then
 		detected=$(detect_ip || true)
-		ask address "Адрес сервера для мода" "$detected"
+		ask address "$(L "Адрес сервера для мода" "Server address for the mod")" "$detected"
 		if valid_address "$address"; then save_address "$address"; fi
 	fi
 	if [[ -z $name ]]; then
-		pick_user "Чьи данные показать?" || return 0
+		pick_user "$(L "Чьи данные показать?" "Whose data to show?")" || return 0
 		name=$PICKED
 	fi
 	"$BIN" user show -config "$CONF" "$name" >"$WORK/user" 2>"$WORK/err" || { warn "$(cat "$WORK/err")"; return 1; }
@@ -946,20 +1081,21 @@ action_show() {
 
 action_add() {
 	local name=${1:-} err
-	title "Новый пользователь"
-	hint "Каждый, кто открывает через этот relay свой мир, — отдельный пользователь со своим"
-	hint "секретом и своим адресом для друзей."
+	title "$(L "Новый пользователь" "New user")"
+	hint "$(L "Каждый, кто открывает через этот relay свой мир, — отдельный пользователь со своим" \
+		"Everyone who opens their world through this relay is a separate user with their own")"
+	hint "$(L "секретом и своим адресом для друзей." "secret and their own address for friends.")"
 	require_manageable || return 1
 	while :; do
 		if [[ -z $name ]]; then
-			interactive || die "Укажите имя: add ИМЯ"
-			ask name "Имя (латиница, цифры, . _ -; Enter — отмена)" ""
+			interactive || die "$(L "Укажите имя: add ИМЯ" "Give the name: add NAME")"
+			ask name "$(L "Имя (латиница, цифры, . _ -; Enter — отмена)" "Name (Latin letters, digits, . _ -; Enter: cancel)")" ""
 			[[ -n $name ]] || return 0
 		fi
 		if ! valid_name "$name"; then
-			warn "«$name» не подходит: от 1 до 32 символов A-Z a-z 0-9 . _ -"
+			warn "$(L "«$name» не подходит: от 1 до 32 символов A-Z a-z 0-9 . _ -" "\"$name\" will not do: 1 to 32 characters A-Z a-z 0-9 . _ -")"
 		elif "$BIN" user show -config "$CONF" "$name" >/dev/null 2>&1; then
-			warn "Пользователь $name уже есть."
+			warn "$(L "Пользователь $name уже есть." "User $name already exists.")"
 		else
 			break
 		fi
@@ -968,102 +1104,114 @@ action_add() {
 	done
 	if ! "$BIN" user add -config "$CONF" "$name" >"$WORK/user" 2>"$WORK/err"; then
 		err=$(cat "$WORK/err")
-		warn "Не получилось: $err"
+		warn "$(L "Не получилось: $err" "That did not work: $err")"
 		return 1
 	fi
-	ok "пользователь $name добавлен"
+	ok "$(L "пользователь $name добавлен" "user $name added")"
 	reload_relay
 	card "$WORK/user"
 }
 
 action_remove() {
 	local name=${1:-} answer count
-	title "Удаление пользователя"
+	title "$(L "Удаление пользователя" "Removing a user")"
 	require_manageable || return 1
 	count=$("$BIN" user list -config "$CONF" | wc -l)
 	if ((count <= 1)); then
-		warn "Это единственный пользователь: relay без пользователей не работает."
-		hint "Сначала добавьте другого или удалите MCTunnel целиком."
+		warn "$(L "Это единственный пользователь: relay без пользователей не работает." "This is the only user: the relay does not work without users.")"
+		hint "$(L "Сначала добавьте другого или удалите MCTunnel целиком." "Add another one first, or uninstall MCTunnel altogether.")"
 		return 1
 	fi
 	if [[ -z $name ]]; then
-		pick_user "Кого удалить?" || return 0
+		pick_user "$(L "Кого удалить?" "Whom to remove?")" || return 0
 		name=$PICKED
 	fi
 	if ((OPT_YES == 0)); then
-		interactive || die "Для удаления без вопросов: remove ИМЯ --yes"
-		warn "Туннель $name закроется, его друзья отключатся, секрет перестанет работать."
-		ask answer "Чтобы подтвердить, введите имя ещё раз" ""
-		[[ $answer == "$name" ]] || { info "Отменено."; return 0; }
+		interactive || die "$(L "Для удаления без вопросов: remove ИМЯ --yes" "To remove without questions: remove NAME --yes")"
+		warn "$(L "Туннель $name закроется, его друзья отключатся, секрет перестанет работать." \
+			"The tunnel of $name closes, their friends get disconnected, the secret stops working.")"
+		ask answer "$(L "Чтобы подтвердить, введите имя ещё раз" "To confirm, type the name again")" ""
+		[[ $answer == "$name" ]] || { info "$(L "Отменено." "Cancelled.")"; return 0; }
 	fi
 	if ! "$BIN" user remove -config "$CONF" "$name" 2>"$WORK/err"; then
-		warn "Не получилось: $(cat "$WORK/err")"
+		warn "$(L "Не получилось: $(cat "$WORK/err")" "That did not work: $(cat "$WORK/err")")"
 		return 1
 	fi
-	ok "пользователь $name удалён"
+	ok "$(L "пользователь $name удалён" "user $name removed")"
 	reload_relay
 }
 
 action_list() {
 	local line n p s
-	title "Пользователи"
+	title "$(L "Пользователи" "Users")"
 	require_manageable || return 1
 	while IFS=$'\t' read -r n p s; do
-		printf '    %s  %sпорт %s%s%s\n' "$(pad "$n" 20)" "$DGRAY" "$p" "$([[ $s == off ]] && printf ', выключен' || true)" "$R"
+		printf '    %s  %s%s %s%s%s\n' "$(pad "$n" 20)" "$DGRAY" "$(L "порт" "port")" "$p" \
+			"$([[ $s == off ]] && L ", выключен" ", off" || true)" "$R"
 	done < <("$BIN" user list -config "$CONF")
 }
 
 action_firewall() {
-	title "Файрвол"
+	title "$(L "Файрвол" "Firewall")"
 	ports_of
 	if ! firewall_step "${HOST_PORTS[@]}" "$PLAYER_RANGE/tcp"; then
-		info "Файрвол не трогаю."
+		info "$(L "Файрвол не трогаю." "Leaving the firewall alone.")"
 		return 0
 	fi
 	lockdown "${FIREWALL_KEEP[@]}"
 }
 
 action_restart() {
-	title "Перезапуск relay"
-	info "Туннели переподключатся сами за несколько секунд."
+	title "$(L "Перезапуск relay" "Restarting the relay")"
+	info "$(L "Туннели переподключатся сами за несколько секунд." "Tunnels reconnect by themselves within seconds.")"
 	systemctl reset-failed "$SERVICE" 2>/dev/null || true
 	systemctl restart "$SERVICE" || true
-	if relay_up; then ok "relay работает"; else show_journal 12; warn "Relay не запустился: причина — в строках выше."; fi
+	if relay_up; then
+		ok "$(L "relay работает" "the relay is running")"
+	else
+		show_journal 12
+		warn "$(L "Relay не запустился: причина — в строках выше." "The relay did not start: the reason is in the lines above.")"
+	fi
 }
 
 action_log() {
-	title "Журнал relay"
+	title "$(L "Журнал relay" "Relay log")"
 	show_journal 25
-	hint "Весь журнал: sudo journalctl -u $SERVICE -f"
+	hint "$(L "Весь журнал:" "The whole log:") sudo journalctl -u $SERVICE -f"
 }
 
 action_uninstall() {
 	local answer
-	title "Удаление MCTunnel"
-	warn "Relay остановится, друзья отключатся, настройки с секретами будут удалены."
+	title "$(L "Удаление MCTunnel" "Uninstalling MCTunnel")"
+	warn "$(L "Relay остановится, друзья отключатся, настройки с секретами будут удалены." \
+		"The relay stops, friends get disconnected, the configuration with the secrets is deleted.")"
 	if ((OPT_YES == 0)); then
-		interactive || die "Для удаления без вопросов: uninstall --yes"
-		ask answer "Чтобы подтвердить, введите: удалить" ""
-		case "$answer" in удалить | Удалить | УДАЛИТЬ | delete) ;; *) info "Отменено."; return 1 ;; esac
+		interactive || die "$(L "Для удаления без вопросов: uninstall --yes" "To uninstall without questions: uninstall --yes")"
+		ask answer "$(L "Чтобы подтвердить, введите: удалить" "To confirm, type: delete")" ""
+		case "$answer" in
+			удалить | Удалить | УДАЛИТЬ | delete | Delete | DELETE) ;;
+			*) info "$(L "Отменено." "Cancelled.")"; return 1 ;;
+		esac
 	fi
 	[[ -x $BIN ]] && close_firewall
 	systemctl disable --now "$SERVICE" >/dev/null 2>&1 || true
 	rm -f "$UNIT"
 	systemctl daemon-reload
 	systemctl reset-failed "$SERVICE" >/dev/null 2>&1 || true
-	ok "служба $SERVICE остановлена и удалена"
+	ok "$(L "служба $SERVICE остановлена и удалена" "the $SERVICE service is stopped and removed")"
 	rm -f "$BIN" "$BIN.prev" "$BIN.new"
 	rm -rf "$ETC"
-	ok "удалены $BIN и $ETC"
+	ok "$(L "удалены $BIN и $ETC" "removed $BIN and $ETC")"
 	rm -f "$SYSCTL" "$MODLOAD"
 	userdel "$SYSUSER" >/dev/null 2>&1 || true
 	groupdel "$SYSUSER" >/dev/null 2>&1 || true
-	ok "удалён системный пользователь $SYSUSER"
-	hint "BBR остаётся включённым до перезагрузки сервера."
+	ok "$(L "удалён системный пользователь $SYSUSER" "removed the system user $SYSUSER")"
+	hint "$(L "BBR остаётся включённым до перезагрузки сервера." "BBR stays on until the server reboots.")"
 	if command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q '^Status: active'; then
-		hint "Файрвол остаётся включённым: порты relay закрыты, SSH открыт (выключить: sudo ufw disable)."
+		hint "$(L "Файрвол остаётся включённым: порты relay закрыты, SSH открыт (выключить: sudo ufw disable)." \
+			"The firewall stays on: the relay's ports are closed, SSH is open (to turn it off: sudo ufw disable).")"
 	fi
-	printf '\n  %sMCTunnel удалён. Спасибо, что играли!%s\n\n' "$GREEN$BOLD" "$R"
+	printf '\n  %s%s%s\n\n' "$GREEN$BOLD" "$(L "MCTunnel удалён. Спасибо, что играли!" "MCTunnel is uninstalled. Thanks for playing!")" "$R"
 	return 0
 }
 
@@ -1082,34 +1230,35 @@ status_line() {
 	local version state users address dot
 	version=$([[ -x $BIN ]] && relay_version "$BIN" || true)
 	if systemctl is-active --quiet "$SERVICE"; then
-		dot="$GREEN●$R" state="работает"
+		dot="$GREEN●$R" state=$(L "работает" "running")
 	else
-		dot="$RED●$R" state="остановлен"
+		dot="$RED●$R" state=$(L "остановлен" "stopped")
 	fi
 	users="?"
 	if manageable; then users=$("$BIN" user list -config "$CONF" 2>/dev/null | wc -l); fi
 	address=$(saved_address)
-	printf '\n  %s %srelay %s%s · %s · пользователей: %s%s\n' "$dot" "$WHITE$BOLD" "${version:-?}" "$R" "$state" "$users" \
-		"$([[ -n $address ]] && printf ' · %s' "$address" || true)"
+	printf '\n  %s %srelay %s%s · %s · %s %s%s\n' "$dot" "$WHITE$BOLD" "${version:-?}" "$R" "$state" \
+		"$(L "пользователей:" "users:")" "$users" "$([[ -n $address ]] && printf ' · %s' "$address" || true)"
 }
 
 menu() {
 	local choice target=$RELEASE
-	[[ $target == dev ]] && target="последней версии"
+	[[ $target == dev ]] && target=$(L "последней версии" "the latest version")
+	state_set LANGUAGE "$UI"
 	while :; do
 		status_line
 		printf '\n'
-		printf '    %s1%s  Обновить relay до %s\n' "$AQUA$BOLD" "$R" "$target"
-		printf '    %s2%s  Показать данные для мода\n' "$AQUA$BOLD" "$R"
-		printf '    %s3%s  Добавить пользователя\n' "$AQUA$BOLD" "$R"
-		printf '    %s4%s  Удалить пользователя\n' "$AQUA$BOLD" "$R"
-		printf '    %s5%s  Перезапустить relay\n' "$AQUA$BOLD" "$R"
-		printf '    %s6%s  Журнал relay\n' "$AQUA$BOLD" "$R"
-		printf '    %s7%s  Файрвол: закрыть всё, кроме relay и SSH\n' "$AQUA$BOLD" "$R"
-		printf '    %s8%s  Удалить MCTunnel с сервера\n' "$AQUA$BOLD" "$R"
-		printf '    %s0%s  Выход\n' "$AQUA$BOLD" "$R"
+		printf '    %s1%s  %s\n' "$AQUA$BOLD" "$R" "$(L "Обновить relay до $target" "Update the relay to $target")"
+		printf '    %s2%s  %s\n' "$AQUA$BOLD" "$R" "$(L "Показать данные для мода" "Show the data for the mod")"
+		printf '    %s3%s  %s\n' "$AQUA$BOLD" "$R" "$(L "Добавить пользователя" "Add a user")"
+		printf '    %s4%s  %s\n' "$AQUA$BOLD" "$R" "$(L "Удалить пользователя" "Remove a user")"
+		printf '    %s5%s  %s\n' "$AQUA$BOLD" "$R" "$(L "Перезапустить relay" "Restart the relay")"
+		printf '    %s6%s  %s\n' "$AQUA$BOLD" "$R" "$(L "Журнал relay" "Relay log")"
+		printf '    %s7%s  %s\n' "$AQUA$BOLD" "$R" "$(L "Файрвол: закрыть всё, кроме relay и SSH" "Firewall: close everything but the relay and SSH")"
+		printf '    %s8%s  %s\n' "$AQUA$BOLD" "$R" "$(L "Удалить MCTunnel с сервера" "Uninstall MCTunnel from the server")"
+		printf '    %s0%s  %s\n' "$AQUA$BOLD" "$R" "$(L "Выход" "Exit")"
 		interactive || return 0
-		ask choice "Выберите" "0"
+		ask choice "$(L "Выберите" "Choose")" "0"
 		case "$choice" in
 			1) action_update || true ;;
 			2) action_show "" || true ;;
@@ -1120,7 +1269,7 @@ menu() {
 			7) action_firewall || true ;;
 			8) action_uninstall && return 0 ;;
 			0 | q | й | exit | выход) printf '\n'; return 0 ;;
-			*) warn "Нет такого пункта: $choice" ;;
+			*) warn "$(L "Нет такого пункта: $choice" "No such item: $choice")" ;;
 		esac
 	done
 }
@@ -1134,6 +1283,7 @@ MCTunnel relay installer
   install.sh update | list | add NAME | show NAME | remove NAME [--yes] | uninstall [--yes]
   install.sh firewall [--keep "80 443/tcp"]
   install.sh auto                   used by deploy.ps1
+  --lang ru|en                      the language, without asking
 EOF
 }
 
@@ -1145,6 +1295,7 @@ parse_args() {
 				ACTION=$1
 				if (($# > 1)) && [[ $2 != --* ]]; then ACTION_ARG=$2; shift; fi
 				;;
+			--lang) OPT_LANG=${2:-}; shift ;;
 			--user) OPT_USER=${2:-}; shift ;;
 			--address) OPT_ADDRESS=${2:-}; shift ;;
 			--ports) OPT_PORTS=${2:-}; shift ;;
@@ -1152,7 +1303,7 @@ parse_args() {
 			--no-firewall) OPT_NO_FIREWALL=1 ;;
 			--yes | -y) OPT_YES=1 ;;
 			-h | --help | help) usage; exit 0 ;;
-			*) usage >&2; die "Непонятный аргумент: $1" ;;
+			*) usage >&2; die "$(L "Непонятный аргумент: $1" "Unknown argument: $1")" ;;
 		esac
 		shift
 	done
@@ -1164,6 +1315,7 @@ main() {
 	setup_output
 	parse_args "$@"
 	setup_input
+	choose_language
 	check_system
 	if [[ -n ${BASH_SOURCE[0]:-} && -f ${BASH_SOURCE[0]} ]]; then
 		HERE=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
@@ -1175,7 +1327,8 @@ main() {
 	case "$ACTION" in
 		"") if installed; then menu; else wizard; fi ;;
 		install)
-			installed && die "Relay уже установлен." "Запустите установщик без аргументов: откроется меню."
+			installed && die "$(L "Relay уже установлен." "The relay is already installed.")" \
+				"$(L "Запустите установщик без аргументов: откроется меню." "Run the installer without arguments: the menu opens.")"
 			wizard
 			;;
 		update) require_installed; action_update || exit 1 ;;
